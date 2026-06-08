@@ -32,7 +32,8 @@ async def on_add(update: types.ChatMemberUpdated):
                     try:
                         await bot.kick_chat_member(chat, member.user.id)
                         await bot.unban_chat_member(chat, member.user.id)
-                    except: pass
+                    except:
+                        pass
             await bot.send_message(chat, "✅ Все участники кикнуты.")
         else:
             await bot.send_message(chat, "❌ Нужны права администратора с возможностью кика.")
