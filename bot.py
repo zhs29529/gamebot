@@ -3,9 +3,10 @@ import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberStatus
 from aiogram.utils import executor
+from aiohttp import web
 
-TOKEN = os.getenv("BOT_TOKEN", "8861142827:AAHrkMWX8SvneyNzHr6RhtEuvzhKn7uU3fE")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "GameBattleRoyaleBot")
+TOKEN = os.environ["BOT_TOKEN"]
+BOT_USERNAME = os.environ["BOT_USERNAME"]
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -38,5 +39,22 @@ async def on_add(update: types.ChatMemberUpdated):
         else:
             await bot.send_message(chat, "❌ Нужны права администратора с возможностью кика.")
 
+# Health check сервер для Render
+async def health_check(request):
+    return web.Response(text="OK")
+
+async def run_web():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    port = int(os.environ.get("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"✅ Health check server running on port {port}")
+    await asyncio.Event().wait()  # бесконечно ждать
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_web())          # запускаем HTTP-сервер в фоне
+    executor.start_polling(dp, skip_updates=True)  # запускаем бота
